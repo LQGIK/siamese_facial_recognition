@@ -7,12 +7,22 @@ from PIL import Image
 import cv2
 import numpy as np
 import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras import models
+from tensorflow.keras import initializers
+from tensorflow.keras import Input
+from tensorflow.keras import backend as K
 from sklearn.model_selection import train_test_split
 
 
 def load(dir):
     """
     Loads all images from a specified directory
+    Returns
+        images {list of images}
+        labels {list of labels 0-6}
+        dict_keys {name : 0 - 6}
     """
     # Initalize return arrays
     images = []
@@ -30,14 +40,22 @@ def load(dir):
             img_path = os.path.join(person_path, image)
             img = cv2.imread(img_path, 0)
             images.append(img)
+            labels.append(count)
 
         # Store 0-n with corresponding person name
-        keys[count] = person
+        keys[person] = count 
         count += 1
     
     return (images, labels, keys)
 
-def get_model(input_shape):
+def getLayer(filters, kernel_size):
+    return layers.Conv2D(
+        filters=        filters, 
+        kernel_size=    kernel_size, 
+        activation=     "relu", 
+    )
+
+def getModel(input_shape):
     """
     Returns a compiled convolutional neural network model. Assume that the
     `input_shape` of the first layer is `(IMG_WIDTH, IMG_HEIGHT, 3)`.
@@ -45,35 +63,34 @@ def get_model(input_shape):
     """
 
     # Convolutional Neural Network
-    model = tf.keras.models.Sequential([
-        tf.keras.layers.Conv2D(64, (10, 10), activation="relu", input_shape=(input_shape)),
-        tf.keras.layers.MaxPooling2D(pool_size=(2,2), padding="same"),
-        tf.keras.layers.Conv2D(64, (10, 10), activation="relu"),
-        tf.keras.layers.MaxPooling2D(pool_size=(2,2), padding="same"),
-        tf.keras.layers.Conv2D(128, (7,7), activation="relu"),
-        tf.keras.layers.MaxPooling2D(pool_size=(2,2), padding="same"),
-        tf.keras.layers.Conv2D(200, (4,4), activation="relu"),
-        tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(1000, activation="sigmoid")
-    ])
+    model = models.Sequential()
+    model.add(layers.Conv2D(filters=32, kernel_size=(8, 8), activation="relu", input_shape=input_shape))
+    model.add(layers.MaxPooling2D(pool_size=(2,2)))
+    model.add(getLayer(64, (4, 4)))
+    model.add(layers.MaxPooling2D(pool_size=(2,2)))
+    model.add(getLayer(128, (4, 4)))
+    model.add(layers.MaxPooling2D(pool_size=(2,2)))
+    model.add(getLayer(256, (4, 4)))
+    model.add(layers.Flatten())
+    model.add(layers.Dense(1000, activation="relu"))
     
 
 
     # Define the tensors (vectors) for the two input images as input_x1 & x2. Next we want to pull all the feature vectors by 
     # putting these tensors through the CNN
-    input_x1 = tf.keras.Input(input_shape)
-    input_x2 = tf.keras.Input(input_shape)
+    input_x1 = Input(input_shape)
+    input_x2 = Input(input_shape)
     encoded_l = model(input_x1)
     encoded_r = model(input_x2)
     
     # Feed feature vectors into energy function. This is a custom function that calculates the absolute difference between either vector.
     # The Lambda (or custom) layer is a neat feature that allows us to do our own math operations. In this case we just subtract the vectors!
     # The first part is making the layer, and the second part actually executes it
-    L1_layer = tf.keras.layers.Lambda(lambda tensors: abs(tensors[0] - tensors[1]))
+    L1_layer = layers.Lambda(lambda tensors: abs(tensors[0] - tensors[1]))
     L1_distance = L1_layer([encoded_l, encoded_r])
     
     # Add a dense layer with a sigmoid unit to generate the similarity score
-    prediction = tf.keras.layers.Dense(1, activation='sigmoid')(L1_distance)
+    prediction = layers.Dense(1, activation='sigmoid')(L1_distance)
     
     # Make a single model, comprised of taking in two inputs, and spitting out one output
     siamese_net = tf.keras.Model(
@@ -86,31 +103,31 @@ def get_model(input_shape):
 
     # Compile the model with weight optimization, loss algorithms and emphasize accuracy
     siamese_net.compile(
-        optimizer="RMSprop",
+        optimizer="Adam",
         loss="binary_crossentropy",
         metrics=["accuracy"]
     )
-    #tf.keras.losses.
 
-    return siamese_ne
+    return siamese_net
 
 
 def generateBatch(n, images, labels, dict_keys):
-    n_per_person = n / 2
+    n_per_person = int(n / 2)
+    people = dict_keys.keys()
     for person in people:
         
         person_index = dict_keys[person]
-        person_images = narrowToPerson(person_index, dict_keys, labels) # Narrow down for ease
+        person_images = narrowToPerson(person_index, dict_keys, images, labels) # Narrow down for ease
 
         matching_pairs = createPersonMatches(n_per_person, person_images)
-        mismatching_pairs = createPersonMismatches(n_per_person, person_images, images, dict_keys)
+        mismatching_pairs = createPersonMismatches(n_per_person, person, person_images, images, labels, dict_keys)
 
         return matching_pairs, mismatching_pairs
 
 
 
 
-def createPersonMismatches(n_per_person, person_images, images, dict_keys):
+def createPersonMismatches(n_per_person, person, person_images, images, labels, dict_keys):
     '''
     n_per_person {int pairs to be made}
     person_images {sliced list to only include imgs from person}
@@ -120,14 +137,17 @@ def createPersonMismatches(n_per_person, person_images, images, dict_keys):
     '''
     person_pairs = []
     for n in range(n_per_person):
-        random_person_img_index = randint(0, len(person_images))
+        random_person_img_index = randint(0, len(person_images) - 1)
         random_person_img = person_images[random_person_img_index]
 
-        other_person_index = getRandomIntExcluding(0, max(keys), keys[person])
-        other_person_imgs = narrowToPerson(other_person_index, dict_keys, labels)
-        random_other_img_index = randint(0, len(other_person_imgs))
-        random_other_person_img = random_other_person_imgs[random_other_img_index] 
+        other_person_index = getRandomIntExcluding(0, max(dict_keys.values()), dict_keys[person])
+        other_person_imgs = narrowToPerson(other_person_index, dict_keys, images, labels)
+        random_other_img_index = randint(0, len(other_person_imgs) - 1)
+        random_other_person_img = other_person_imgs[random_other_img_index] 
 
+        # Reshaping (100, 100) to (100, 100, 1)
+        random_person_img = np.reshape(random_person_img, (100, 100, 1))
+        random_other_person_img = np.reshape(random_person_img, (100, 100, 1))
         person_pairs.append([random_person_img, random_other_person_img])
     return person_pairs
 
@@ -138,14 +158,18 @@ def createPersonMatches(n_per_person, person_images):
     '''
     person_pairs = []
     for n in range(n_per_person):
-        random_img_index1 = randint(0, len(person_images))
-        random_img_index2 = randint(0, len(person_images))
+        random_img_index1 = randint(0, len(person_images) - 1)
+        random_img_index2 = randint(0, len(person_images) - 1)
         random_img1 = person_images[random_img_index1]
         random_img2 = person_images[random_img_index2]
+
+        # Reshaping (100, 100) to (100, 100, 1)
+        random_img1 = np.reshape(random_img1, (100, 100, 1))
+        random_img2 = np.reshape(random_img2, (100, 100, 1))
         person_pairs.append([random_img1, random_img2])
     return person_pairs
 
-def narrowToPerson(person_index, dict_keys, labels):
+def narrowToPerson(person_index, dict_keys, images, labels):
         # Narrow down imgs to search through by slicing
         # Then finally create matching pairs for each person
         '''
@@ -156,7 +180,7 @@ def narrowToPerson(person_index, dict_keys, labels):
         '''
         
         startIndex = labels.index(person_index)
-        endIndex =  lastItem(labels, person_index)
+        endIndex =  lastItem(labels, person_index) + 1
         person_images = images[startIndex:endIndex]
         return person_images
 
@@ -176,20 +200,59 @@ def unique(list1):
 def lastItem(list1, item):
     return len(list1) - 1 - list1[::-1].index(item)
 
+
+def train(model, x_train, y_train):
+
+    # Train model on each pair
+    for i in range(x_train.shape[0]):
+        # do stuff
+        pair = x_train[i]
+        label = y_train[i]
+        img0, img1 = pair
+        label = np.reshape(label, (2, 1))
+
+        probs = model.predict(pair)
+        print("Prediction: " + str(np.argmax(probs)) )
+        print("Label: " + str(np.argmax(label)) + "\n")
+
+    return 0
+
+
 def main():
 
     # Global vars
+    n = 10
     EPOCHS = 50
     IMG_WIDTH = 100
     IMG_HEIGHT = 100
     TEST_SIZE = 0.4
 
 
-    # Get image arrays and labels for all image files. Then make batches of mixed or matched pairs
-    images, labels, keys = load(r"C:\users\xlqgi\dev\ai\deep\facerecog\siamese\images\proc")
-    matching_pairs, mismatching_pairs = generateBatch(10, images, labels)
+    # Get image arrays and labels for all image files. Then make batches of mixed or matched pairs with corresponding labels
+    images, labels, dict_keys = load(r"C:\users\xlqgi\dev\ai\deep\facerecog\siamese\images\proc")
+    matching_pairs, mismatching_pairs = generateBatch(n, images, labels, dict_keys)
+    pairs = np.asarray(matching_pairs + mismatching_pairs)
+    labels = np.asarray([1 for i in range(int(n / 2))] + [0 for i in range(int(n / 2))])          # 1 signifies match, 0 signifies no match
+
+    # Split data into training and testing sets
+    labels = tf.keras.utils.to_categorical(labels)
+    x_train, x_test, y_train, y_test = train_test_split(
+        np.asarray(pairs), np.asarray(labels), test_size=TEST_SIZE
+    )
+    # x_train.shape = (6, 2, 100, 100) means 6 people, 2 images, each image is 100 rows, each row has 100 pixels
+    # y_train.shape = (6, 2) means 6 people, 2
+    x_train_shape = (100, 100, 1)
+    model = getModel(x_train_shape)
+
+    train(model, pairs, labels)
+
+    # Save model to file
+    if len(sys.argv) == 2:
+        filename = sys.argv[1]
+        model.save(filename)
+        print(f"Model saved to {filename}.")
 
 
 
-def __name__ == "__main__":
+if __name__ == "__main__":
     main()
