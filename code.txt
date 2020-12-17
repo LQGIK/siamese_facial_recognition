@@ -1,0 +1,8 @@
+match
+
+    pairs = []
+    for person in people
+        img0 = choose from person_images
+        img1 = choose from person_images
+        label = 1
+    pairs.append([img0, img1])

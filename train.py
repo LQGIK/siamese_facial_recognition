@@ -201,7 +201,16 @@ def lastItem(list1, item):
     return len(list1) - 1 - list1[::-1].index(item)
 
 
+def getBatch(n, images, labels):
+
+    num_people, = np.asarray(images)
+    np.zeros((n, ))
+
 def train(model, x_train, y_train):
+
+    x_shape = x_train.shape
+    pairs = np.zeros(())
+
 
     # Train model on each pair
     for i in range(x_train.shape[0]):
@@ -209,7 +218,6 @@ def train(model, x_train, y_train):
         pair = x_train[i]
         label = y_train[i]
         img0, img1 = pair
-        label = np.reshape(label, (2, 1))
 
         probs = model.predict(pair)
         print("Prediction: " + str(np.argmax(probs)) )
@@ -229,19 +237,21 @@ def main():
 
 
     # Get image arrays and labels for all image files. Then make batches of mixed or matched pairs with corresponding labels
-    images, labels, dict_keys = load(r"C:\users\xlqgi\dev\ai\deep\facerecog\siamese\images\proc")
+    images, labels, dict_keys = load(r"images/proc")
     matching_pairs, mismatching_pairs = generateBatch(n, images, labels, dict_keys)
     pairs = np.asarray(matching_pairs + mismatching_pairs)
-    labels = np.asarray([1 for i in range(int(n / 2))] + [0 for i in range(int(n / 2))])          # 1 signifies match, 0 signifies no match
+    labels = np.zeros((n,))
+    labels[n//2:] = 0
 
     # Split data into training and testing sets
-    labels = tf.keras.utils.to_categorical(labels)
     x_train, x_test, y_train, y_test = train_test_split(
-        np.asarray(pairs), np.asarray(labels), test_size=TEST_SIZE
+        np.asarray(pairs), labels, test_size=TEST_SIZE
     )
     # x_train.shape = (6, 2, 100, 100) means 6 people, 2 images, each image is 100 rows, each row has 100 pixels
     # y_train.shape = (6, 2) means 6 people, 2
     x_train_shape = (100, 100, 1)
+    getBatch(n, images, labels)
+
     model = getModel(x_train_shape)
 
     train(model, pairs, labels)
